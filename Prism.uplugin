@@ -1,0 +1,31 @@
+{
+  "FileVersion": 3,
+  "Version": 6,
+  "VersionName": "0.1.0-alpha.6",
+  "FriendlyName": "Prism",
+  "Description": "An extensible procedural texture authoring library for Unreal Engine TextureGraph.",
+  "Category": "Editor",
+  "CreatedBy": "Mippi The Dork",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "EnabledByDefault": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "PrismRender",
+      "Type": "Editor",
+      "LoadingPhase": "PostConfigInit"
+    },
+    {
+      "Name": "PrismEditor",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "TextureGraph",
+      "Enabled": true
+    }
+  ]
+}

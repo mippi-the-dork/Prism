@@ -1,0 +1,91 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/TextureGraph/SamplerStates.ush"
+#include "/Plugin/TextureGraph/TileInfo.ush"
+Texture2D Input;
+int Operation;
+float Radius;
+float Threshold;
+float Strength;
+float Amount;
+float4 ColorA;
+float4 ColorB;
+float4 ColorC;
+float4 ColorD;
+float Luma(float3 c) { return dot(c,float3(0.2126,0.7152,0.0722)); }
+float Mask(float2 uv) { return Luma(Input.SampleLevel(SamplerStates_Linear_Clamp,uv,0).rgb); }
+float4 FSH_PrismOp(float2 LocalUV:TEXCOORD0):SV_Target0
+{
+    float2 uv=TileInfo_fromCurrentTileToLayer(LocalUV);
+    float2 dim=float2(max(1,TileInfo_TileCountX*TileInfo_TileWidth),max(1,TileInfo_TileCountY*TileInfo_TileHeight));
+    float2 px=rcp(dim);
+    float4 src=Input.SampleLevel(SamplerStates_Linear_Clamp,uv,0);
+    float val=Luma(src.rgb);
+    if(Operation==0) // Bounded Euclidean distance from opposite binary class
+    {
+        bool inside=val>=Threshold;
+        int r=clamp((int)Radius,1,24);
+        float best=(float)r;
+        [loop] for(int y=-24;y<=24;y++)
+        {
+            if(abs(y)>r) continue;
+            [loop] for(int x=-24;x<=24;x++)
+            {
+                if(abs(x)>r || x*x+y*y>r*r) continue;
+                float n=Mask(uv+float2(x,y)*px);
+                if((n>=Threshold)!=inside) best=min(best,length(float2(x,y)));
+            }
+        }
+        float signedDistance=(inside?best:-best)/max(1.0,Radius);
+        return float4(saturate(0.5+0.5*signedDistance),saturate(0.5+0.5*signedDistance),saturate(0.5+0.5*signedDistance),1);
+    }
+    if(Operation==1) // Four-knot monotone x, user-controlled y, smooth interpolation
+    {
+        float t=saturate(val)*3.0;
+        float v0=ColorA.x,v1=ColorB.x,v2=ColorC.x,v3=ColorD.x;
+        float result;
+        if(t<1) result=lerp(v0,v1,smoothstep(0,1,t));
+        else if(t<2) result=lerp(v1,v2,smoothstep(0,1,t-1));
+        else result=lerp(v2,v3,smoothstep(0,1,t-2));
+        return float4(saturate(result),saturate(result),saturate(result),src.a);
+    }
+    if(Operation==2) // Four-stop color gradient map
+    {
+        float t=saturate(val)*3.0;
+        float4 c=t<1?lerp(ColorA,ColorB,saturate(t)):(t<2?lerp(ColorB,ColorC,t-1):lerp(ColorC,ColorD,t-2));
+        return float4(c.rgb,c.a*src.a);
+    }
+    if(Operation==3) // Local connected region hash, bounded BFS approximation (not full CCL)
+    {
+        if(val<Threshold) return float4(0,0,0,1);
+        int r=clamp((int)Radius,1,16);
+        float2 best=uv;
+        [loop] for(int y=-16;y<=16;y++)
+        {
+            if(abs(y)>r) continue;
+            [loop] for(int x=-16;x<=16;x++)
+            {
+                if(abs(x)>r) continue;
+                float2 pos=uv+float2(x,y)*px;
+                if(Mask(pos)>=Threshold && (pos.y<best.y || (abs(pos.y-best.y)<px.y*.1 && pos.x<best.x))) best=pos;
+            }
+        }
+        // Local-minimum hash, NOT global connected-component labelling.
+        float id=frac(sin(dot(floor(best*dim),float2(12.9898,78.233)))*43758.5453);
+        return float4(id,id,id,1);
+    }
+    if(Operation==4 || Operation==5) // Sharpen / high pass 4-neighbor Laplacian
+    {
+        float4 avg=(Input.SampleLevel(SamplerStates_Linear_Clamp,uv+float2(px.x,0),0)
+            +Input.SampleLevel(SamplerStates_Linear_Clamp,uv-float2(px.x,0),0)
+            +Input.SampleLevel(SamplerStates_Linear_Clamp,uv+float2(0,px.y),0)
+            +Input.SampleLevel(SamplerStates_Linear_Clamp,uv-float2(0,px.y),0))*0.25;
+        float3 detail=src.rgb-avg.rgb;
+        return float4(Operation==4?saturate(src.rgb+detail*Strength):saturate(0.5+detail*Strength),src.a);
+    }
+    if(Operation==6) // Posterize grayscale or RGB
+    {
+        float levels=max(2.0,floor(Amount));
+        return float4(round(saturate(src.rgb)*(levels-1))/(levels-1),src.a);
+    }
+    return src;
+}
