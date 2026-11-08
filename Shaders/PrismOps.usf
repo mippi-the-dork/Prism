@@ -2,6 +2,7 @@
 #include "/Plugin/TextureGraph/SamplerStates.ush"
 #include "/Plugin/TextureGraph/TileInfo.ush"
 Texture2D Input;
+Texture2D InputB;
 int Operation;
 float Radius;
 float Threshold;
@@ -11,6 +12,39 @@ float4 ColorA;
 float4 ColorB;
 float4 ColorC;
 float4 ColorD;
+float4 Sample0;
+float4 Sample1;
+float4 Sample2;
+float4 Sample3;
+float4 Sample4;
+float4 Sample5;
+float4 Sample6;
+float4 Sample7;
+
+float PrismHash(float2 p, float seed)
+{
+    return frac(sin(dot(p,float2(127.1,311.7))+seed*0.113)*43758.5453123);
+}
+float2 PrismCell(float2 cell, float2 counts)
+{
+    return floor(frac(cell/counts)*counts+0.0001);
+}
+float PrismShape(float2 p,int kind,float2 cell)
+{
+    float2 a=abs(p);
+    if(kind==0 || kind==6) return 1.0-step(0.5,max(a.x,a.y));
+    if(kind==1) return 1.0-step(0.5,length(p));
+    if(kind==2) return 1.0-step(0.5,a.x+a.y);
+    if(kind==3) return 1.0-step(0.5773503,max(a.y*1.1547005,a.x*0.5773503+a.y*0.5773503));
+    if(kind==4)
+    {
+        float2 q=max(a-0.32,0.0);
+        return 1.0-step(0.18,length(q));
+    }
+    if(kind==5) return fmod(cell.x+cell.y,2.0)<0.5 ? 1.0 : 0.0;
+    return (1.0-step(0.15,min(a.x,a.y)))*(1.0-step(0.5,max(a.x,a.y)));
+}
+
 float Luma(float3 c) { return dot(c,float3(0.2126,0.7152,0.0722)); }
 float Mask(float2 uv) { return Luma(Input.SampleLevel(SamplerStates_Linear_Clamp,uv,0).rgb); }
 float4 FSH_PrismOp(float2 LocalUV:TEXCOORD0):SV_Target0
@@ -86,6 +120,294 @@ float4 FSH_PrismOp(float2 LocalUV:TEXCOORD0):SV_Target0
     {
         float levels=max(2.0,floor(Amount));
         return float4(round(saturate(src.rgb)*(levels-1))/(levels-1),src.a);
+    }
+    if(Operation==7) // Soft threshold: threshold with symmetric transition region
+    {
+        float halfWidth=max(0.00001,Radius*0.5);
+        float m=smoothstep(Threshold-halfWidth,Threshold+halfWidth,val);
+        return float4(m,m,m,src.a);
+    }
+    if(Operation==8) // Levels remap: input black/white, gamma, output black/white
+    {
+        float lo=ColorA.x, hi=max(lo+0.00001,ColorB.x);
+        float3 normalized=saturate((src.rgb-lo)/(hi-lo));
+        float3 result=lerp(ColorC.xxx,ColorD.xxx,pow(normalized,1.0/max(0.01,Strength)));
+        return float4(saturate(result),src.a);
+    }
+    if(Operation==9) // Per-channel clamp range
+    {
+        return float4(clamp(src.rgb,ColorA.rgb,ColorB.rgb),src.a);
+    }
+    if(Operation==10) // Selective inversion: four switches encoded 0/1
+    {
+        return lerp(src,1.0-src,saturate(ColorA));
+    }
+    if(Operation==11 || Operation==12 || Operation==13 || Operation==14 || Operation==15)
+    {
+        float2 stepUV=px*max(1.0,Radius);
+        float tl=Mask(uv+stepUV*float2(-1,-1));
+        float tc=Mask(uv+stepUV*float2( 0,-1));
+        float tr=Mask(uv+stepUV*float2( 1,-1));
+        float ml=Mask(uv+stepUV*float2(-1, 0));
+        float mr=Mask(uv+stepUV*float2( 1, 0));
+        float bl=Mask(uv+stepUV*float2(-1, 1));
+        float bc=Mask(uv+stepUV*float2( 0, 1));
+        float br=Mask(uv+stepUV*float2( 1, 1));
+        float gx=(tr+2*mr+br)-(tl+2*ml+bl);
+        float gy=(bl+2*bc+br)-(tl+2*tc+tr);
+        if(Operation==11) // edge magnitude
+        {
+            float edge=saturate(length(float2(gx,gy))*Strength*0.25);
+            return float4(edge,edge,edge,src.a);
+        }
+        if(Operation==12) // Tangent-space normal from height. Neutral (0.5,0.5,1)
+        {
+            float3 n=normalize(float3(-gx*Strength,-gy*Strength,8));
+            return float4(n*0.5+0.5,src.a);
+        }
+        if(Operation==13) // Emboss: height slope with directional illumination
+        {
+            float a=Amount*0.01745329252;
+            float shade=saturate(0.5+(gx*cos(a)+gy*sin(a))*Strength*0.125);
+            return float4(shade,shade,shade,src.a);
+        }
+        if(Operation==14) // Bevel lighting preview: not an SDF bevel generator
+        {
+            float a=Amount*0.01745329252;
+            float edge=saturate(length(float2(gx,gy))*Strength*0.25);
+            float lit=saturate(0.5+(gx*cos(a)+gy*sin(a))*0.125);
+            float result=lerp(val,lit,edge);
+            return float4(result,result,result,src.a);
+        }
+        // Local contrast: 3x3 neighborhood mean, detail reconstruction
+        float3 avg=(Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(-1,-1),0).rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(0,-1),0).rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(1,-1),0).rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(-1,0),0).rgb
+                  + src.rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(1,0),0).rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(-1,1),0).rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(0,1),0).rgb
+                  + Input.SampleLevel(SamplerStates_Linear_Clamp,uv+stepUV*float2(1,1),0).rgb)/9.0;
+        return float4(saturate(src.rgb+(src.rgb-avg)*Strength),src.a);
+    }
+    if(Operation==16) // Blend modes: 0 normal, 1 multiply, 2 screen, 3 add, 4 subtract, 5 overlay, 6 min, 7 max
+    {
+        float4 layer=InputB.SampleLevel(SamplerStates_Linear_Clamp,uv,0);
+        int mode=clamp((int)round(Amount),0,7);
+        float3 result=layer.rgb;
+        if(mode==1) result=src.rgb*layer.rgb;
+        else if(mode==2) result=1.0-(1.0-src.rgb)*(1.0-layer.rgb);
+        else if(mode==3) result=saturate(src.rgb+layer.rgb);
+        else if(mode==4) result=saturate(src.rgb-layer.rgb);
+        else if(mode==5) result=lerp(2.0*src.rgb*layer.rgb,1.0-2.0*(1.0-src.rgb)*(1.0-layer.rgb),step(0.5,src.rgb));
+        else if(mode==6) result=min(src.rgb,layer.rgb);
+        else if(mode==7) result=max(src.rgb,layer.rgb);
+        float alpha=saturate(Strength)*layer.a;
+        return float4(lerp(src.rgb,result,alpha),src.a+alpha*(1.0-src.a));
+    }
+    if(Operation==17) // Gamma adjustment; identity at 1.0
+    {
+        return float4(pow(max(src.rgb,0.0),1.0/max(0.01,Strength)),src.a);
+    }
+    if(Operation==18 || Operation==19) // Morphology and mask outline; exact square neighborhood within bounded radius
+    {
+        int r=clamp((int)round(Radius),1,12);
+        float maximum=0.0, minimum=1.0;
+        [loop] for(int yy=-12;yy<=12;yy++)
+        {
+            if(abs(yy)>r) continue;
+            [loop] for(int xx=-12;xx<=12;xx++)
+            {
+                if(abs(xx)>r) continue;
+                if(((Operation==18 && Amount>1.5) || Operation==19) && (xx*xx+yy*yy)>r*r) continue; // circular footprints
+                float m=Mask(uv+float2(xx,yy)*px);
+                maximum=max(maximum,m); minimum=min(minimum,m);
+            }
+        }
+        if(Operation==18) { float result=Strength>0.5?maximum:minimum; return float4(result,result,result,src.a); }
+        float edge=Amount<0.5?saturate(maximum-val):(Amount<1.5?saturate(val-minimum):saturate(maximum-minimum));
+        return float4(edge,edge,edge,src.a);
+    }
+    if(Operation==20 || Operation==21 || Operation==22) // Tangent-space normal operators
+    {
+        float3 n=normalize(src.rgb*2.0-1.0);
+        if(Operation==22) { n.xy*=float2(ColorA.x,ColorA.y); n=normalize(n); }
+        if(Operation==20)
+        {
+            float3 detail=normalize(InputB.SampleLevel(SamplerStates_Linear_Clamp,uv,0).rgb*2.0-1.0);
+            detail.xy*=Strength;
+            detail=normalize(detail);
+            // Reoriented normal mapping, preserve base normal hemisphere.
+            float3 t=n+float3(0,0,1);
+            float3 u=detail*float3(-1,-1,1);
+            n=normalize(t*dot(t,u)/max(t.z,0.0001)-u);
+        }
+        return float4(n*0.5+0.5,src.a);
+    }
+    if(Operation==23) // Dynamic gradient lookup from a connected color ramp texture
+    {
+        float2 sampleUV=float2(saturate(val),saturate(Amount));
+        float4 lookup=InputB.SampleLevel(SamplerStates_Linear_Clamp,sampleUV,0);
+        return float4(lookup.rgb,lookup.a*src.a);
+    }
+    if(Operation==24) // Directional warp from second image luminance
+    {
+        float angle=Amount*0.01745329252;
+        float displacement=(Luma(InputB.SampleLevel(SamplerStates_Linear_Clamp,uv,0).rgb)-0.5)*Strength;
+        float2 offset=float2(cos(angle),sin(angle))*displacement*px;
+        return Input.SampleLevel(SamplerStates_Linear_Clamp,uv+offset,0);
+    }
+    if(Operation==25) // Height-driven color/material-layer blend (RGBA textures)
+    {
+        float4 layer=InputB.SampleLevel(SamplerStates_Linear_Clamp,uv,0);
+        float heightA=Luma(src.rgb), heightB=Luma(layer.rgb);
+        float t=smoothstep(-max(Radius,0.0001),max(Radius,0.0001),heightB-heightA+Threshold);
+        t*=saturate(Strength)*layer.a;
+        return float4(lerp(src.rgb,layer.rgb,t),lerp(src.a,layer.a,t));
+    }
+    if(Operation==26) // Seam diagnostic: show texture repeat at its wrapping boundaries
+    {
+        float repeats=max(1.0,Amount);
+        float2 tiled=frac(uv*repeats);
+        float4 result=Input.SampleLevel(SamplerStates_Linear_Wrap,tiled,0);
+        float2 within=abs(tiled-0.5)*2.0;
+        float seam=step(1.0-max(0.0001,Radius)*max(px.x,px.y)*repeats,max(within.x,within.y));
+        return float4(lerp(result.rgb,float3(1,0,1),seam*saturate(Strength)),result.a);
+    }
+    if(Operation==27) // Uniform 8-sample approximation of artist-authored UCurveFloat
+    {
+        float t=saturate(val)*7.0;
+        float values[8]={Sample0.r,Sample1.r,Sample2.r,Sample3.r,Sample4.r,Sample5.r,Sample6.r,Sample7.r};
+        int i=clamp((int)floor(t),0,6);
+        float v=lerp(values[i],values[i+1],frac(t));
+        return float4(v,v,v,src.a);
+    }
+    if(Operation==28) // Uniform 8-sample approximation of artist-authored UCurveLinearColor
+    {
+        float t=saturate(val)*7.0;
+        float4 colors[8]={Sample0,Sample1,Sample2,Sample3,Sample4,Sample5,Sample6,Sample7};
+        int i=clamp((int)floor(t),0,6);
+        float4 c=lerp(colors[i],colors[i+1],frac(t));
+        return float4(c.rgb,c.a*src.a);
+    }
+    if(Operation==29 || Operation==30) // Dedicated spatial generators; never require an input image.
+    {
+        float mode=round(Amount);
+        float2 p=uv-0.5;
+        float t=uv.x;
+        if(mode==1.0) t=1.0-uv.y; // vertical bottom-to-top
+        else if(mode==2.0) t=length(p)*1.41421356237; // radial center to corners
+        else if(mode==3.0) t=atan2(p.y,p.x)*(0.15915494309)+0.5; // angular
+        t=saturate(t);
+        if(Operation==29)
+        {
+            float u=t*7.0;
+            float4 colors[8]={Sample0,Sample1,Sample2,Sample3,Sample4,Sample5,Sample6,Sample7};
+            int i=clamp((int)floor(u),0,6);
+            return lerp(colors[i],colors[i+1],saturate(u-i));
+        }
+        float u=t*7.0;
+        float values[8]={Sample0.r,Sample1.r,Sample2.r,Sample3.r,Sample4.r,Sample5.r,Sample6.r,Sample7.r};
+        int i=clamp((int)floor(u),0,6);
+        float v=lerp(values[i],values[i+1],saturate(u-i));
+        return float4(v,v,v,1.0);
+    }
+
+    if(Operation==31) // Four tileable noise variants. Each octave uses integer cell frequency.
+    {
+        int baseFrequency=clamp((int)round(Radius),1,256);
+        int octaves=clamp((int)round(Threshold),1,8);
+        int kind=clamp((int)round(Amount),0,3);
+        float gain=saturate(Strength);
+        float weighted=0.0, weightSum=0.0, amplitude=1.0;
+        [loop] for(int octave=0;octave<8;octave++)
+        {
+            if(octave>=octaves) break;
+            int cells=baseFrequency*(1<<octave);
+            float2 coordinate=uv*cells;
+            float2 cell=floor(coordinate);
+            float2 t=frac(coordinate);
+            float2 smoothT=t*t*(3.0-2.0*t);
+            float2 period=float2(cells,cells);
+            float2 a=frac((cell+period)/period)*period;
+            float2 b=frac((cell+1.0+period)/period)*period;
+            float octaveSeed=ColorA.x+octave*17.0;
+            float n00=frac(sin(dot(a,float2(127.1,311.7))+octaveSeed*0.12345)*43758.5453);
+            float n10=frac(sin(dot(float2(b.x,a.y),float2(127.1,311.7))+octaveSeed*0.12345)*43758.5453);
+            float n01=frac(sin(dot(float2(a.x,b.y),float2(127.1,311.7))+octaveSeed*0.12345)*43758.5453);
+            float n11=frac(sin(dot(b,float2(127.1,311.7))+octaveSeed*0.12345)*43758.5453);
+            float n=lerp(lerp(n00,n10,smoothT.x),lerp(n01,n11,smoothT.x),smoothT.y);
+            if(kind==2) n=1.0-abs(2.0*n-1.0); // ridged peaks
+            else if(kind==3) n=abs(2.0*n-1.0); // billow
+            weighted+=n*amplitude;
+            weightSum+=amplitude;
+            amplitude*=gain;
+            if(kind==0) break; // single-octave value noise
+        }
+        float result=saturate(weighted/max(weightSum,0.00001));
+        return float4(result,result,result,1.0);
+    }
+
+    if(Operation>=32 && Operation<=35) // Prism grid-pattern family
+    {
+        float2 grid=float2(max(1.0,round(Radius)),max(1.0,round(Threshold)));
+        float2 guv=uv*grid;
+        float2 cell=floor(guv);
+        float2 local=frac(guv)-0.5;
+        if(Operation==32) // Shape generator
+        {
+            int kind=clamp((int)round(Amount),0,7);
+            if(kind==6) // stagger alternate brick rows
+            {
+                guv.x+=0.5*fmod(cell.y,2.0);
+                cell=floor(guv);
+                local=frac(guv)-0.5;
+            }
+            float2 wrapped=PrismCell(cell,grid);
+            float2 jitter=float2(PrismHash(wrapped,ColorA.y),PrismHash(wrapped,ColorA.y+17.0))*2.0-1.0;
+            local-=jitter*ColorA.x;
+            float shape=PrismShape(local/max(0.01,Strength),kind,cell);
+            return float4(shape,shape,shape,1.0);
+        }
+        if(Operation==33) // Pattern sampler. Pattern texture uses isolated per-cell UV; no neighboring cell leaks.
+        {
+            float2 wrapped=PrismCell(cell,grid);
+            float keep=PrismHash(wrapped,ColorA.z+53.0);
+            float density=Luma(InputB.SampleLevel(SamplerStates_Linear_Clamp,(cell+0.5)/grid,0).rgb);
+            if(keep>density) return float4(0,0,0,0);
+            float2 randomOffset=float2(PrismHash(wrapped,ColorA.z+11.0),PrismHash(wrapped,ColorA.z+23.0))*2.0-1.0;
+            local-=randomOffset*ColorA.x;
+            float angle=(PrismHash(wrapped,ColorA.z+37.0)*2.0-1.0)*ColorA.y*3.14159265359;
+            float cs=cos(angle), sn=sin(angle);
+            float2 rotated=float2(cs*local.x-sn*local.y,sn*local.x+cs*local.y);
+            float2 sampleUV=rotated/max(0.01,Strength)+0.5;
+            if(any(sampleUV<0.0) || any(sampleUV>1.0)) return float4(0,0,0,0);
+            return Input.SampleLevel(SamplerStates_Linear_Clamp,sampleUV,0);
+        }
+        if(Operation==34) // Independent per-grid-cell data (not Flood Fill)
+        {
+            float2 wrapped=PrismCell(cell,grid);
+            int kind=clamp((int)round(Amount),0,4);
+            float v=PrismHash(wrapped,ColorA.x);
+            if(kind==1) return float4(v,PrismHash(wrapped,ColorA.x+19.0),PrismHash(wrapped,ColorA.x+47.0),1.0);
+            if(kind==2) v=(wrapped.y*grid.x+wrapped.x)/max(1.0,grid.x*grid.y-1.0);
+            if(kind==3) v=(wrapped.x+0.5)/grid.x;
+            if(kind==4) v=(wrapped.y+0.5)/grid.y;
+            return float4(v,v,v,1.0);
+        }
+        int mode=clamp((int)round(Amount),0,3);
+        float2 f=frac(guv);
+        float x=1.0-step(0.5*Strength,abs(f.x-0.5));
+        float y=1.0-step(0.5*Strength,abs(f.y-0.5));
+        if(mode==0) return float4(y,y,y,1.0);
+        if(mode==1) return float4(x,x,x,1.0);
+        if(mode==2) { float v=fmod(cell.x+cell.y,2.0); return float4(v,v,v,1.0); }
+        float over=fmod(cell.x+cell.y,2.0);
+        float strand=max(x,y);
+        float highlight=over<0.5 ? y : x;
+        float v=saturate(strand*(0.55+0.45*highlight));
+        return float4(v,v,v,1.0);
     }
     return src;
 }
