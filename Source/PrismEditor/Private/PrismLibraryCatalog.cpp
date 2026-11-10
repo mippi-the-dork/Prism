@@ -1,16 +1,16 @@
 #include "PrismLibraryCatalog.h"
-#include "PrismLibraryEntry.h"
+#include "PrismFunction.h"
 #include "TextureGraph.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Modules/ModuleManager.h"
 
-bool FPrismLibraryCatalog::IsRegistered(const UPrismLibraryEntry* Entry)
+bool FPrismLibraryCatalog::IsRegistered(const UPrismFunction* Entry)
 {
     return IsValid(Entry) && !Entry->Graph.IsNull();
 }
 
-bool FPrismLibraryCatalog::MatchesSearch(const UPrismLibraryEntry* Entry, const FString& Query)
+bool FPrismLibraryCatalog::MatchesSearch(const UPrismFunction* Entry, const FString& Query)
 {
     if (!IsRegistered(Entry)) return false;
     const FString Normalized = Query.TrimStartAndEnd();
@@ -32,35 +32,35 @@ bool FPrismLibraryCatalog::MatchesSearch(const UPrismLibraryEntry* Entry, const 
     return true;
 }
 
-bool FPrismLibraryCatalog::IsDuplicateGraph(const UTextureGraph* Graph, const TArray<UPrismLibraryEntry*>& Entries)
+bool FPrismLibraryCatalog::IsDuplicateGraph(const UTextureGraph* Graph, const TArray<UPrismFunction*>& Entries)
 {
     if (!IsValid(Graph)) return false;
     const FSoftObjectPath GraphPath(Graph);
-    for (const UPrismLibraryEntry* Entry : Entries)
+    for (const UPrismFunction* Entry : Entries)
     {
         if (IsRegistered(Entry) && Entry->Graph.ToSoftObjectPath() == GraphPath) return true;
     }
     return false;
 }
 
-bool FPrismLibraryCatalog::HasValidReplacement(const UPrismLibraryEntry* Entry)
+bool FPrismLibraryCatalog::HasValidReplacement(const UPrismFunction* Entry)
 {
     return IsValid(Entry) && Entry->bDeprecated && !Entry->Replacement.IsNull()
         && Entry->Replacement.ToSoftObjectPath() != FSoftObjectPath(Entry);
 }
 
-void FPrismLibraryCatalog::QueryEntries(TArray<UPrismLibraryEntry*>& OutEntries)
+void FPrismLibraryCatalog::QueryEntries(TArray<UPrismFunction*>& OutEntries)
 {
     OutEntries.Reset();
     FAssetRegistryModule& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
     FARFilter Filter;
-    Filter.ClassPaths.Add(UPrismLibraryEntry::StaticClass()->GetClassPathName());
+    Filter.ClassPaths.Add(UPrismFunction::StaticClass()->GetClassPathName());
     Filter.bRecursiveClasses = true;
     TArray<FAssetData> Assets;
     Registry.Get().GetAssets(Filter, Assets);
     for (const FAssetData& Asset : Assets)
     {
-        UPrismLibraryEntry* Entry = Cast<UPrismLibraryEntry>(Asset.GetAsset());
+        UPrismFunction* Entry = Cast<UPrismFunction>(Asset.GetAsset());
         if (IsRegistered(Entry)) OutEntries.Add(Entry);
     }
 }

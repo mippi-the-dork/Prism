@@ -6,7 +6,7 @@ public class PrismEditor : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine", "TextureGraph", "TextureGraphEngine", "PrismRender" });
         PrivateDependencyModuleNames.AddRange(new[] {
-            "Slate", "SlateCore", "UnrealEd", "AssetRegistry", "AssetTools", "ContentBrowser",
+            "Slate", "SlateCore", "AssetDefinition", "EngineAssetDefinitions", "UnrealEd", "AssetRegistry", "AssetTools", "ContentBrowser",
             "EditorFramework", "ToolMenus", "Projects", "InputCore", "ApplicationCore",
             "RHI", "RenderCore"
         });

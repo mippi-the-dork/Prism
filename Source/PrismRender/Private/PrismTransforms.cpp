@@ -16,6 +16,9 @@ public:
         SHADER_PARAMETER_STRUCT(FStandardSamplerStates, SamplerStates)
         SHADER_PARAMETER_TEXTURE(Texture2D, Input)
         SHADER_PARAMETER_TEXTURE(Texture2D, InputB)
+        SHADER_PARAMETER_TEXTURE(Texture2D, InputC)
+        SHADER_PARAMETER_TEXTURE(Texture2D, InputD)
+        SHADER_PARAMETER_TEXTURE(Texture2D, InputE)
         SHADER_PARAMETER(int32, Operation)
         SHADER_PARAMETER(float, Radius)
         SHADER_PARAMETER(float, Threshold)
@@ -42,7 +45,8 @@ public:
 IMPLEMENT_GLOBAL_SHADER(FSH_PrismOp, "/Plugin/Prism/PrismOps.usf", "FSH_PrismOp", SF_Pixel);
 
 TiledBlobPtr FPrismTransforms::Create(EPrismOp Op, MixUpdateCyclePtr Cycle, BufferDescriptor DesiredDesc,
-    TiledBlobPtr Input, const FPrismOpSettings& Settings, int32 TargetId, TiledBlobPtr InputB)
+    TiledBlobPtr Input, const FPrismOpSettings& Settings, int32 TargetId, TiledBlobPtr InputB,
+    TiledBlobPtr InputC, TiledBlobPtr InputD, TiledBlobPtr InputE)
 {
     if (!Input || !Cycle) return TextureHelper::GetBlack();
     const RenderMaterial_FXPtr Material = TextureGraphEngine::GetMaterialManager()
@@ -50,11 +54,17 @@ TiledBlobPtr FPrismTransforms::Create(EPrismOp Op, MixUpdateCyclePtr Cycle, Buff
     check(Material);
     const TiledBlobPtr Combined = T_CombineTiledBlob::Create(Cycle, Input->GetDescriptor(), TargetId, Input);
     const TiledBlobPtr CombinedB = InputB ? T_CombineTiledBlob::Create(Cycle, InputB->GetDescriptor(), TargetId, InputB) : Combined;
+    const TiledBlobPtr CombinedC = InputC ? T_CombineTiledBlob::Create(Cycle, InputC->GetDescriptor(), TargetId, InputC) : Combined;
+    const TiledBlobPtr CombinedD = InputD ? T_CombineTiledBlob::Create(Cycle, InputD->GetDescriptor(), TargetId, InputD) : Combined;
+    const TiledBlobPtr CombinedE = InputE ? T_CombineTiledBlob::Create(Cycle, InputE->GetDescriptor(), TargetId, InputE) : Combined;
     FTileInfo TileInfo;
     JobUPtr RenderJob = std::make_unique<Job>(Cycle->GetMix(), TargetId, std::static_pointer_cast<BlobTransform>(Material));
     RenderJob->AddArg(ARG_TILEINFO(TileInfo, "TileInfo"))
         ->AddArg(ARG_BLOB(Combined, "Input"))
         ->AddArg(ARG_BLOB(CombinedB, "InputB"))
+        ->AddArg(ARG_BLOB(CombinedC, "InputC"))
+        ->AddArg(ARG_BLOB(CombinedD, "InputD"))
+        ->AddArg(ARG_BLOB(CombinedE, "InputE"))
         ->AddArg(ARG_INT(static_cast<int32>(Op), "Operation"))
         ->AddArg(ARG_FLOAT(Settings.Radius, "Radius"))
         ->AddArg(ARG_FLOAT(Settings.Threshold, "Threshold"))

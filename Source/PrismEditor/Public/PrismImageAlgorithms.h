@@ -19,3 +19,54 @@ public:
     static bool SignedEuclideanDistance(const TArray<uint8>& BinaryMask, int32 Width, int32 Height,
         TArray<float>& OutDistances);
 };
+
+/** Data derived from stable connected-component labels. Background pixels are always zero. */
+enum class EPrismRegionChannel : uint8
+{
+    RandomGrayscale,
+    NormalizedIndex,
+    PositionX,
+    PositionY,
+    LocalGradientX,
+    LocalGradientY,
+    AreaNormalized,
+    CentroidX,
+    CentroidY,
+    BoundingBoxWidth,
+    BoundingBoxHeight
+};
+
+/** Measurements for one connected component. Pixel coordinates are inclusive. */
+struct FPrismRegionStats
+{
+    int32 Label = 0;
+    int32 PixelCount = 0;
+    int32 MinX = 0;
+    int32 MinY = 0;
+    int32 MaxX = 0;
+    int32 MaxY = 0;
+    double CentroidX = 0.0;
+    double CentroidY = 0.0;
+};
+
+/** Pure CPU reference implementation for connected-region procedural data. */
+class PRISMEDITOR_API FPrismRegionData
+{
+public:
+    /** Derive exact region measurements; index 0 is the background placeholder. */
+    static bool Measure(const TArray<int32>& Labels, int32 Width, int32 Height,
+        TArray<FPrismRegionStats>& OutStats);
+
+    /** Generate a grayscale buffer from 1-based region labels, where label 0 is background.
+     * Invalid labels or dimensions return false; results are deterministic for a given seed.
+     */
+    static bool Generate(const TArray<int32>& Labels, int32 Width, int32 Height,
+        EPrismRegionChannel Channel, int32 Seed, TArray<float>& OutValues);
+
+    /** Complete CPU reference path: binary mask -> connected regions -> per-region pixels.
+     * This remains a CPU reference and is not yet a TextureGraph evaluation node.
+     */
+    static bool GenerateFromMask(const TArray<uint8>& BinaryMask, int32 Width, int32 Height,
+        bool bEightConnected, EPrismRegionChannel Channel, int32 Seed,
+        TArray<float>& OutValues, int32& OutRegionCount);
+};

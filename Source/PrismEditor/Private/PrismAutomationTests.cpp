@@ -8,7 +8,11 @@
 #include "Expressions/PrismExpression_Curve.h"
 #include "Expressions/PrismExpression_Distance.h"
 #include "Misc/AutomationTest.h"
-#include "PrismLibraryEntry.h"
+#include "PrismFunction.h"
+#include "PrismFunctionFactory.h"
+#include "AssetDefinition_PrismFunction.h"
+#include "AssetToolsModule.h"
+#include "AssetTypeCategories.h"
 #include "TextureGraph.h"
 #include "PrismLibraryCatalog.h"
 #include "Expressions/PrismExpression_MultiPassBlur.h"
@@ -39,11 +43,144 @@
 #include "Expressions/PrismExpression_CurveGenerator.h"
 #include "PrismImageAlgorithms.h"
 #if WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismRegionDerivativesTest, "Prism.Algorithms.RegionDerivedChannelsCPU",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismRegionDerivativesTest::RunTest(const FString& Parameters)
+{
+    // Two disconnected 2x2 islands in a 5x2 mask.
+    const TArray<int32> Labels = { 1, 1, 0, 2, 2, 1, 1, 0, 2, 2 };
+    TArray<float> Values;
+    TestTrue(TEXT("Random grayscale generated"), FPrismRegionData::Generate(
+        Labels, 5, 2, EPrismRegionChannel::RandomGrayscale, 42, Values));
+    if (Values.Num() != Labels.Num()) return false;
+    TestEqual(TEXT("Same region has same random value"), Values[0], Values[6]);
+    TestEqual(TEXT("Second region is consistent"), Values[3], Values[9]);
+    TestEqual(TEXT("Background is black"), Values[2], 0.f);
+    const float First = Values[0];
+    TestTrue(TEXT("Different seed generated"), FPrismRegionData::Generate(
+        Labels, 5, 2, EPrismRegionChannel::RandomGrayscale, 43, Values));
+    TestNotEqual(TEXT("Seed changes random value"), First, Values[0]);
+    TestTrue(TEXT("Region index generated"), FPrismRegionData::Generate(
+        Labels, 5, 2, EPrismRegionChannel::NormalizedIndex, 0, Values));
+    TestEqual(TEXT("First index normalized"), Values[0], 0.5f);
+    TestEqual(TEXT("Second index normalized"), Values[4], 1.f);
+    TestTrue(TEXT("Local horizontal gradient generated"), FPrismRegionData::Generate(
+        Labels, 5, 2, EPrismRegionChannel::LocalGradientX, 0, Values));
+    TestTrue(TEXT("Gradient increases inside island"), Values[0] < Values[1]);
+    TestEqual(TEXT("Gradient is consistent across rows"), Values[0], Values[5]);
+    TArray<int32> Invalid = Labels;
+    Invalid[0] = -1;
+    TestFalse(TEXT("Invalid labels rejected"), FPrismRegionData::Generate(
+        Invalid, 5, 2, EPrismRegionChannel::PositionX, 0, Values));
+    return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismRegionStatisticsTest, "Prism.Algorithms.RegionStatisticsCPU",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismRegionStatisticsTest::RunTest(const FString& Parameters)
+{
+    // Two 2x2 islands in a 5x2 canvas; deterministic, pixel-center centroids.
+    const TArray<int32> Labels = {1, 1, 0, 2, 2, 1, 1, 0, 2, 2};
+    TArray<FPrismRegionStats> Stats;
+    TestTrue(TEXT("Measurements succeed"), FPrismRegionData::Measure(Labels, 5, 2, Stats));
+    if (Stats.Num() != 3) return false;
+    TestEqual(TEXT("Region one pixel count"), Stats[1].PixelCount, 4);
+    TestEqual(TEXT("Region one left"), Stats[1].MinX, 0);
+    TestEqual(TEXT("Region one right"), Stats[1].MaxX, 1);
+    TestEqual(TEXT("Region two left"), Stats[2].MinX, 3);
+    TestEqual(TEXT("Region two right"), Stats[2].MaxX, 4);
+    TestEqual(TEXT("Region one centroid X"), Stats[1].CentroidX, 1.0);
+    TestEqual(TEXT("Region two centroid X"), Stats[2].CentroidX, 4.0);
+    TestEqual(TEXT("Region centroid Y"), Stats[1].CentroidY, 1.0);
+    const TArray<int32> Sparse = {1, 0, 3};
+    TestFalse(TEXT("Sparse labels rejected"), FPrismRegionData::Measure(Sparse, 3, 1, Stats));
+    const TArray<int32> Excessive = {2147483647, 0, 0};
+    TestFalse(TEXT("Invalid oversized label rejected"), FPrismRegionData::Measure(Excessive, 3, 1, Stats));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismRegionAdvancedChannelsTest, "Prism.Algorithms.RegionAdvancedChannelsCPU",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismRegionAdvancedChannelsTest::RunTest(const FString& Parameters)
+{
+    const TArray<int32> Labels = {1, 1, 0, 2, 2, 1, 1, 0, 2, 2};
+    TArray<float> V;
+    TestTrue(TEXT("Area channel"), FPrismRegionData::Generate(Labels, 5, 2, EPrismRegionChannel::AreaNormalized, 1, V));
+    if (V.Num() != 10) return false;
+    TestEqual(TEXT("Region area fraction"), V[0], 0.4f);
+    TestEqual(TEXT("Area consistent"), V[0], V[6]);
+    TestTrue(TEXT("Centroid X"), FPrismRegionData::Generate(Labels, 5, 2, EPrismRegionChannel::CentroidX, 1, V));
+    TestEqual(TEXT("First centroid X normalized"), V[0], 0.2f);
+    TestEqual(TEXT("Second centroid X normalized"), V[3], 0.8f);
+    TestTrue(TEXT("Centroid Y"), FPrismRegionData::Generate(Labels, 5, 2, EPrismRegionChannel::CentroidY, 1, V));
+    TestEqual(TEXT("Centroid Y normalized"), V[0], 0.5f);
+    TestTrue(TEXT("Region width"), FPrismRegionData::Generate(Labels, 5, 2, EPrismRegionChannel::BoundingBoxWidth, 1, V));
+    TestEqual(TEXT("Width fraction"), V[0], 0.4f);
+    TestTrue(TEXT("Region height"), FPrismRegionData::Generate(Labels, 5, 2, EPrismRegionChannel::BoundingBoxHeight, 1, V));
+    TestEqual(TEXT("Height fraction"), V[0], 1.0f);
+    TestEqual(TEXT("Background remains black"), V[2], 0.0f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismRegionEndToEndCPUTest, "Prism.Algorithms.RegionMaskToChannelCPU",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismRegionEndToEndCPUTest::RunTest(const FString& Parameters)
+{
+    const TArray<uint8> Mask = {1, 0, 1, 0, 1, 0, 1, 0, 1};
+    TArray<float> Output;
+    int32 Regions = -1;
+    TestTrue(TEXT("Four-connected mask evaluated"), FPrismRegionData::GenerateFromMask(
+        Mask, 3, 3, false, EPrismRegionChannel::NormalizedIndex, 7, Output, Regions));
+    TestEqual(TEXT("Four-connected checkerboard has five regions"), Regions, 5);
+    if (Output.Num() != 9) return false;
+    TestEqual(TEXT("First region index"), Output[0], 0.2f);
+    TestEqual(TEXT("Last region index"), Output[8], 1.0f);
+    TestEqual(TEXT("Background remains zero"), Output[1], 0.0f);
+    TestTrue(TEXT("Eight-connected mask evaluated"), FPrismRegionData::GenerateFromMask(
+        Mask, 3, 3, true, EPrismRegionChannel::NormalizedIndex, 7, Output, Regions));
+    TestEqual(TEXT("Eight-connected checkerboard is one region"), Regions, 1);
+    TestEqual(TEXT("Merged component gets full label"), Output[0], 1.0f);
+    TestFalse(TEXT("Invalid mask dimensions rejected"), FPrismRegionData::GenerateFromMask(
+        Mask, 4, 3, false, EPrismRegionChannel::NormalizedIndex, 7, Output, Regions));
+    TestEqual(TEXT("Failed pipeline clears region count"), Regions, 0);
+    TestEqual(TEXT("Failed pipeline clears values"), Output.Num(), 0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismFunctionAssetIdentityTest, "Prism.Library.FunctionAssetIdentity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismFunctionAssetIdentityTest::RunTest(const FString& Parameters)
+{
+    const UPrismFunctionFactory* Factory = GetDefault<UPrismFunctionFactory>();
+    const UAssetDefinition_PrismFunction* Definition = GetDefault<UAssetDefinition_PrismFunction>();
+    TestNotNull(TEXT("Prism Function factory"), Factory);
+    TestNotNull(TEXT("Prism Function definition"), Definition);
+    if (!Factory || !Definition) return false;
+    // UFactory::bCreateNew is protected in UE 5.8; test actual creation through the public factory API.
+    UPrismFunctionFactory* MutableFactory = NewObject<UPrismFunctionFactory>(GetTransientPackage());
+    TestNotNull(TEXT("Prism Function factory instance"), MutableFactory);
+    if (!MutableFactory) return false;
+    UObject* Created = MutableFactory->FactoryCreateNew(
+        UPrismFunction::StaticClass(), GetTransientPackage(),
+        MakeUniqueObjectName(GetTransientPackage(), UPrismFunction::StaticClass(), TEXT("PrismFunctionTest")),
+        RF_Transient, nullptr, nullptr);
+    TestNotNull(TEXT("Factory creates a Prism Function asset"), Created);
+    TestTrue(TEXT("Factory creates the correct asset class"), Created && Created->IsA<UPrismFunction>());
+    TestEqual(TEXT("Factory supports Prism Function"), Factory->GetSupportedClass(), UPrismFunction::StaticClass());
+    TestEqual(TEXT("Asset label is Prism Function"), Definition->GetAssetDisplayName().ToString(), FString(TEXT("Prism Function")));
+    TestEqual(TEXT("Asset identity class"), Definition->GetAssetClass().Get(), static_cast<UClass*>(UPrismFunction::StaticClass()));
+    TestEqual(TEXT("Texture category factory"), Factory->GetMenuCategories(), static_cast<uint32>(EAssetTypeCategories::Textures));
+    TestEqual(TEXT("One nested asset category"), static_cast<int32>(Definition->GetAssetCategories().Num()), 1);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismEntryDefaultsTest, "Prism.Library.EntryDefaults",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FPrismEntryDefaultsTest::RunTest(const FString& Parameters)
 {
-    UPrismLibraryEntry* Entry = NewObject<UPrismLibraryEntry>(GetTransientPackage());
+    UPrismFunction* Entry = NewObject<UPrismFunction>(GetTransientPackage());
     TestNotNull(TEXT("Prism entry constructed"), Entry);
     if (!Entry) return false;
     TestFalse(TEXT("New entry is unbound"), Entry->HasGraphReference());
@@ -55,7 +192,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismEntryReferenceTest, "Prism.Library.Refere
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FPrismEntryReferenceTest::RunTest(const FString& Parameters)
 {
-    UPrismLibraryEntry* Entry = NewObject<UPrismLibraryEntry>(GetTransientPackage());
+    UPrismFunction* Entry = NewObject<UPrismFunction>(GetTransientPackage());
     UTextureGraph* Graph = NewObject<UTextureGraph>(GetTransientPackage());
     TestNotNull(TEXT("Transient graph created"), Graph);
     if (!Entry || !Graph) return false;
@@ -69,7 +206,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismCatalogSearchTest, "Prism.Library.SearchA
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FPrismCatalogSearchTest::RunTest(const FString& Parameters)
 {
-    UPrismLibraryEntry* Entry = NewObject<UPrismLibraryEntry>(GetTransientPackage());
+    UPrismFunction* Entry = NewObject<UPrismFunction>(GetTransientPackage());
     UTextureGraph* Graph = NewObject<UTextureGraph>(Entry);
     Entry->Graph = Graph;
     Entry->DisplayName = FText::FromString(TEXT("Stone Grunge"));
@@ -94,9 +231,9 @@ bool FPrismCatalogDuplicatesTest::RunTest(const FString& Parameters)
 {
     UTextureGraph* Graph = NewObject<UTextureGraph>(GetTransientPackage());
     UTextureGraph* DifferentGraph = NewObject<UTextureGraph>(GetTransientPackage());
-    UPrismLibraryEntry* Entry = NewObject<UPrismLibraryEntry>(GetTransientPackage());
+    UPrismFunction* Entry = NewObject<UPrismFunction>(GetTransientPackage());
     Entry->Graph = Graph;
-    const TArray<UPrismLibraryEntry*> Entries = { Entry };
+    const TArray<UPrismFunction*> Entries = { Entry };
     TestTrue(TEXT("Existing graph recognized"), FPrismLibraryCatalog::IsDuplicateGraph(Graph, Entries));
     TestFalse(TEXT("Different graph allowed"), FPrismLibraryCatalog::IsDuplicateGraph(DifferentGraph, Entries));
     TestFalse(TEXT("Null graph rejected as duplicate"), FPrismLibraryCatalog::IsDuplicateGraph(nullptr, Entries));
@@ -109,8 +246,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismCatalogReplacementTest, "Prism.Library.De
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FPrismCatalogReplacementTest::RunTest(const FString& Parameters)
 {
-    UPrismLibraryEntry* Original = NewObject<UPrismLibraryEntry>(GetTransientPackage());
-    UPrismLibraryEntry* Replacement = NewObject<UPrismLibraryEntry>(GetTransientPackage());
+    UPrismFunction* Original = NewObject<UPrismFunction>(GetTransientPackage());
+    UPrismFunction* Replacement = NewObject<UPrismFunction>(GetTransientPackage());
     TestFalse(TEXT("Normal entry has no replacement"), FPrismLibraryCatalog::HasValidReplacement(Original));
     Original->bDeprecated = true;
     TestFalse(TEXT("Deprecated without replacement is unresolved"), FPrismLibraryCatalog::HasValidReplacement(Original));
@@ -605,6 +742,102 @@ bool FPrismStripeWeaveTest::RunTest(const FString& Parameters)
     auto* Node=NewObject<UPrismExpression_StripeWeave>();
     TestTrue(TEXT("Signature valid"),Node->GetSignature().IsValid());
     TestTrue(TEXT("Mode dropdown"),CastField<FEnumProperty>(Node->GetClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(UPrismExpression_StripeWeave,Mode)))!=nullptr);
+    return true;
+}
+#endif
+
+#if WITH_DEV_AUTOMATION_TESTS
+// Analytical validation of the triangular lattice used by the Pattern Generator's
+// hexagon mode. These assertions do NOT replace a shader-pixel readback test.
+namespace PrismHexReference
+{
+    struct FSample { FVector2D Delta; FIntPoint Cell; };
+    static FSample Sample(const FVector2D& UV, int32 Columns, int32 Rows)
+    {
+        const int32 EvenRows = Rows + (Rows & 1);
+        const double Step = 0.8660254037844386;
+        const FVector2D P(UV.X * Columns, UV.Y * EvenRows * Step);
+        const int32 FirstRow = FMath::FloorToInt(P.Y / Step);
+        double BestSquared = TNumericLimits<double>::Max();
+        FSample Best{};
+        for (int32 J=FirstRow-1; J<=FirstRow+1; ++J)
+        {
+            const int32 Shift = ((J%2)+2)%2;
+            const int32 BaseCol=FMath::FloorToInt(P.X - 0.5*Shift);
+            for(int32 I=BaseCol-1; I<=BaseCol+1; ++I)
+            {
+                const FVector2D Delta=P-FVector2D(I+0.5*Shift+0.5,(J+0.5)*Step);
+                if (Delta.SizeSquared() < BestSquared)
+                {
+                    BestSquared=Delta.SizeSquared();
+                    Best={Delta,FIntPoint(I,J)};
+                }
+            }
+        }
+        return Best;
+    }
+    static double HexBoundary(const FVector2D& D)
+    {
+        const double X=FMath::Abs(D.X),Y=FMath::Abs(D.Y);
+        return FMath::Max(X,0.5*X+0.8660254037844386*Y);
+    }
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismHexLatticeTest, "Prism.Patterns.Hexagon.Geometry", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismHexLatticeTest::RunTest(const FString& Parameters)
+{
+    // A true honeycomb must have displaced alternating rows and shared edges.
+    const int32 C=8,R=8;
+    const double RowStep=0.8660254037844386;
+    const auto A=PrismHexReference::Sample(FVector2D(0.5/C,0.5/R),C,R);
+    const auto B=PrismHexReference::Sample(FVector2D(1.0/C,1.5/R),C,R);
+    TestTrue(TEXT("Even-row hex center"),A.Delta.SizeSquared()<1e-8);
+    TestTrue(TEXT("Odd-row hex center staggered half a cell"),B.Delta.SizeSquared()<1e-8);
+    const auto Mid=PrismHexReference::Sample(FVector2D(0.75/C,1.0/R),C,R);
+    TestTrue(TEXT("Neighbor seam is hex boundary"),FMath::IsNearlyEqual(PrismHexReference::HexBoundary(Mid.Delta),0.5,1e-6));
+    // Check that *all* 64 rows and columns in a dense representative sample
+    // lie inside the nearest hex at full fill (no square-cell gaps).
+    bool bCovered=true;
+    for(int32 Y=0;Y<64;++Y) for(int32 X=0;X<64;++X)
+    {
+        const auto P=PrismHexReference::Sample(FVector2D((X+0.37)/64.0,(Y+0.23)/64.0),C,R);
+        bCovered &= PrismHexReference::HexBoundary(P.Delta)<=0.500001;
+    }
+    TestTrue(TEXT("Fully filled regular hex grid covers the plane"),bCovered);
+    for(int32 Y=0;Y<8;++Y)
+    {
+        const double V=(Y+0.41)/8;
+        const auto Left=PrismHexReference::Sample(FVector2D(0.001,V),C,R);
+        const auto Right=PrismHexReference::Sample(FVector2D(1.001,V),C,R);
+        TestTrue(TEXT("Horizontal tile seam repeats"),Left.Delta.Equals(Right.Delta,0.000001));
+        const auto Top=PrismHexReference::Sample(FVector2D(V,0.001),C,R);
+        const auto Bottom=PrismHexReference::Sample(FVector2D(V,1.001),C,R);
+        TestTrue(TEXT("Vertical tile seam repeats"),Top.Delta.Equals(Bottom.Delta,0.000001));
+    }
+    // Odd row values should be rounded to even for seamless stagger parity.
+    const auto OddTop=PrismHexReference::Sample(FVector2D(0.34,0.001),7,7);
+    const auto OddBottom=PrismHexReference::Sample(FVector2D(0.34,1.001),7,7);
+    TestTrue(TEXT("Odd row count also tiles by using next even row count"),OddTop.Delta.Equals(OddBottom.Delta,0.000001));
+    TestTrue(TEXT("Row step remains regular"),FMath::IsNearlyEqual(RowStep, FMath::Sqrt(3.0)/2.0,1e-8));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPrismSamplerMapsTest, "Prism.Patterns.Sampler.ModulationPins", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPrismSamplerMapsTest::RunTest(const FString& Parameters)
+{
+    const auto* Node=NewObject<UPrismExpression_PatternSampler>();
+    TestTrue(TEXT("Sampler signature valid"),Node->GetSignature().IsValid());
+    for (const FName Field : {GET_MEMBER_NAME_CHECKED(UPrismExpression_PatternSampler, ScaleMap),GET_MEMBER_NAME_CHECKED(UPrismExpression_PatternSampler, RotationMap),GET_MEMBER_NAME_CHECKED(UPrismExpression_PatternSampler, OffsetMap)})
+    {
+        const FProperty* Property=Node->GetClass()->FindPropertyByName(Field);
+        TestNotNull(TEXT("Modulation map reflected"),Property);
+        if(Property)
+        {
+            TestEqual(TEXT("Modulation map is a TG input"),Property->GetMetaData(TEXT("TGType")),FString(TEXT("TG_Input")));
+            TestFalse(TEXT("FTG_Texture not Blueprint-exposed"),Property->HasAnyPropertyFlags(CPF_BlueprintVisible));
+        }
+    }
+    TestEqual(TEXT("Scale map is neutral by default"),Node->ScaleMapInfluence,0.0f);
+    TestEqual(TEXT("Rotation map is neutral by default"),Node->RotationMapInfluence,0.0f);
+    TestEqual(TEXT("Offset map is neutral by default"),Node->OffsetMapInfluence,0.0f);
     return true;
 }
 #endif

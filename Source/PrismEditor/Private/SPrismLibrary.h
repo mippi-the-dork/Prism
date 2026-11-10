@@ -4,12 +4,12 @@
 #include "UObject/StrongObjectPtr.h"
 #include "Widgets/Views/SListView.h"
 
-class UPrismLibraryEntry;
+class UPrismFunction;
 class SSearchBox;
 
 struct FPrismLibraryItem
 {
-    TStrongObjectPtr<UPrismLibraryEntry> Entry;
+    TStrongObjectPtr<UPrismFunction> Entry;
     FText Label;
     FText Description;
     FName Category;

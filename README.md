@@ -10,9 +10,9 @@ Extract the ZIP so the plugin lives at `YourProject/Plugins/Prism/Prism.uplugin`
 
 ## Library
 
-Open **Tools > Prism Library**. Select a TextureGraph asset in the Content Browser and click **Register Selected** to create a `PL_` library metadata asset under `/Game/PrismLibrary`. Save the entry; set its category, subcategory, tags, description and display name in its Details editor. Prism's browser lets you search and open the graph, browse it in the Content Browser, or edit its metadata. Drag the source TextureGraph asset from the Content Browser into another TextureGraph canvas to insert the native subgraph.
+Open **Tools > Prism Library**. Select a TextureGraph asset in the Content Browser and click **Register Selected** to create a `PF_` library metadata asset under `/Game/PrismLibrary`. Save the entry; set its category, subcategory, tags, description and display name in its Details editor. Prism's browser lets you search and open the graph, browse it in the Content Browser, or edit its metadata. Drag the source TextureGraph asset from the Content Browser into another TextureGraph canvas to insert the native subgraph.
 
-Library search supports multiple case-insensitive terms across labels, descriptions, category, subcategory, tags and asset path. Registrations for the same graph are rejected by **Register Selected**; pre-existing duplicate metadata assets can still be created manually and are not destroyed. Prism listens to Asset Registry add/update/delete/rename events for `UPrismLibraryEntry` and batches a deferred refresh instead of polling. **Refresh** remains available for unsaved metadata edits.
+Library search supports multiple case-insensitive terms across labels, descriptions, category, subcategory, tags and asset path. Registrations for the same graph are rejected by **Register Selected**; pre-existing duplicate metadata assets can still be created manually and are not destroyed. Prism listens to Asset Registry add/update/delete/rename events for `UPrismFunction` and batches a deferred refresh instead of polling. **Refresh** remains available for unsaved metadata edits.
 
 Prism metadata is separate from TextureGraph assets. Original graphs and native TextureGraph capabilities are unaffected.
 
@@ -105,3 +105,15 @@ Run `Automation RunTests Prism` (40 tests). Verify generator behavior without in
 - Shader noise is deterministic but not yet validated by GPU pixel-readback automation. Frequency * 2^octaves can become expensive or alias at high frequencies; use moderate settings for texture resolutions.
 - The original bounded Distance and local Region Variation effects are still approximations. The exact CPU reference algorithms do not yet feed TextureGraph's GPU evaluation.
 - Prism is pre-release; node schema changes do not include migration for old experimental graphs.
+
+
+## Development batch: Pattern Geometry & Modulated Sampling (Alpha 14)
+
+The Pattern Generator now uses a true staggered honeycomb grid for Hexagon, and handles brick, checkerboard, and weave parity across UV seams. Pattern Sampler adds optional ScaleMap, RotationMap, and OffsetMap inputs with per-map influence sliders. See [Pattern Geometry & Sampling](Docs/PATTERN_GEOMETRY_AND_SAMPLING.md) for mode-by-mode behavior, remaining limitations, and validation.
+
+This build remains **experimental**. Test registration and reference geometry are automated, but actual GPU pixel output must still be checked in the Unreal Editor.
+
+
+## Function assets
+
+Use **Content Browser → Add → Texture → Prism → Prism Function** to create a reusable graph registration directly, or select a TextureGraph and use **Tools → Prism Library → Register Selected**. Each Prism Function points to exactly one TextureGraph; the library browser displays all registered functions.

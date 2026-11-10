@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
-  "Version": 11,
-  "VersionName": "0.1.0-alpha.11",
+  "Version": 17,
+  "VersionName": "0.1.0-alpha.17",
   "FriendlyName": "Prism",
   "Description": "An extensible procedural texture authoring library for Unreal Engine TextureGraph.",
   "Category": "Editor",
@@ -25,6 +25,10 @@
   "Plugins": [
     {
       "Name": "TextureGraph",
+      "Enabled": true
+    },
+    {
+      "Name": "EngineAssetDefinitions",
       "Enabled": true
     }
   ]

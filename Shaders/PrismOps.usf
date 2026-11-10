@@ -3,6 +3,9 @@
 #include "/Plugin/TextureGraph/TileInfo.ush"
 Texture2D Input;
 Texture2D InputB;
+Texture2D InputC; // Per-instance scale modulation
+Texture2D InputD; // Per-instance rotation modulation
+Texture2D InputE; // Per-instance positional modulation
 int Operation;
 float Radius;
 float Threshold;
@@ -35,13 +38,13 @@ float PrismShape(float2 p,int kind,float2 cell)
     if(kind==0 || kind==6) return 1.0-step(0.5,max(a.x,a.y));
     if(kind==1) return 1.0-step(0.5,length(p));
     if(kind==2) return 1.0-step(0.5,a.x+a.y);
-    if(kind==3) return 1.0-step(0.5773503,max(a.y*1.1547005,a.x*0.5773503+a.y*0.5773503));
+    // Hexagons use the separate staggered-lattice path in Operation 32.
     if(kind==4)
     {
         float2 q=max(a-0.32,0.0);
         return 1.0-step(0.18,length(q));
     }
-    if(kind==5) return fmod(cell.x+cell.y,2.0)<0.5 ? 1.0 : 0.0;
+    if(kind==5) return (fmod(cell.x+cell.y,2.0)<0.5 ? 1.0 : 0.0) * (1.0-step(0.5,max(a.x,a.y)));
     return (1.0-step(0.15,min(a.x,a.y)))*(1.0-step(0.5,max(a.x,a.y)));
 }
 
@@ -352,12 +355,58 @@ float4 FSH_PrismOp(float2 LocalUV:TEXCOORD0):SV_Target0
     if(Operation>=32 && Operation<=35) // Prism grid-pattern family
     {
         float2 grid=float2(max(1.0,round(Radius)),max(1.0,round(Threshold)));
+        // Checkerboards and weaves require even periodicity at both seams.
+        if ((Operation==32 && (int)round(Amount)==5) ||
+            (Operation==35 && (int)round(Amount)>=2))
+            grid=2.0*ceil(grid*0.5);
+        // Brick stagger repeats every two rows; an odd count has an unmatched seam.
+        if (Operation==32 && (int)round(Amount)==6)
+            grid.y=2.0*ceil(grid.y*0.5);
         float2 guv=uv*grid;
         float2 cell=floor(guv);
         float2 local=frac(guv)-0.5;
         if(Operation==32) // Shape generator
         {
             int kind=clamp((int)round(Amount),0,7);
+            if(kind==3) // Hexagons: true staggered triangular lattice / hexagonal Voronoi cells.
+            {
+                // An even row count preserves the stagger phase across the vertical tile seam.
+                float hexRows=2.0*ceil(grid.y*0.5);
+                const float rowStep=0.866025403784; // sqrt(3)/2
+                float2 hexUV=float2(uv.x*grid.x,uv.y*hexRows*rowStep);
+                float candidateRow=floor(hexUV.y/rowStep);
+                float bestDist=1e20;
+                float2 bestLocal=0.0;
+                float2 bestCell=0.0;
+                [unroll] for(int r=-1;r<=1;r++)
+                {
+                    float row=candidateRow+r;
+                    float parity=frac(row*0.5)*2.0;
+                    float col=floor(hexUV.x-0.5*parity);
+                    float2 delta=hexUV-float2(col+0.5*parity+0.5,(row+0.5)*rowStep);
+                    // Probe adjacent columns as needed at high aspect ratios and around boundaries.
+                    [unroll] for(int c=-1;c<=1;c++)
+                    {
+                        float2 d=delta-float2(c,0);
+                        float ds=dot(d,d);
+                        if(ds<bestDist)
+                        {
+                            bestDist=ds;
+                            bestLocal=d;
+                            bestCell=float2(col+c,row);
+                        }
+                    }
+                }
+                float2 wrapped=PrismCell(bestCell,float2(grid.x,hexRows));
+                float2 jitter=float2(PrismHash(wrapped,ColorA.y),PrismHash(wrapped,ColorA.y+17.0))*2.0-1.0;
+                float2 p=bestLocal-jitter*(ColorA.x*0.5);
+                float2 a=abs(p);
+                float hexDistance=max(a.x,0.5*a.x+rowStep*a.y);
+                float edge=0.5*saturate(Strength);
+                float feather=max(fwidth(hexDistance),0.00001);
+                float shape=1.0-smoothstep(edge-feather*0.5,edge+feather*0.5,hexDistance);
+                return float4(shape,shape,shape,1.0);
+            }
             if(kind==6) // stagger alternate brick rows
             {
                 guv.x+=0.5*fmod(cell.y,2.0);
@@ -376,12 +425,22 @@ float4 FSH_PrismOp(float2 LocalUV:TEXCOORD0):SV_Target0
             float keep=PrismHash(wrapped,ColorA.z+53.0);
             float density=Luma(InputB.SampleLevel(SamplerStates_Linear_Clamp,(cell+0.5)/grid,0).rgb);
             if(keep>density) return float4(0,0,0,0);
+            float2 centerUV=(cell+0.5)/grid;
+            // Sample all modulation maps at the *cell center*: each instance gets one
+            // coherent value instead of the map distorting individual pixels of a tile.
+            float scaleValue=Luma(InputC.SampleLevel(SamplerStates_Linear_Clamp,centerUV,0).rgb);
+            float rotationValue=Luma(InputD.SampleLevel(SamplerStates_Linear_Clamp,centerUV,0).rgb);
+            float2 offsetValue=InputE.SampleLevel(SamplerStates_Linear_Clamp,centerUV,0).rg;
+            float scaleFactor=lerp(1.0,lerp(0.25,2.0,saturate(scaleValue)),saturate(ColorB.x));
             float2 randomOffset=float2(PrismHash(wrapped,ColorA.z+11.0),PrismHash(wrapped,ColorA.z+23.0))*2.0-1.0;
             local-=randomOffset*ColorA.x;
-            float angle=(PrismHash(wrapped,ColorA.z+37.0)*2.0-1.0)*ColorA.y*3.14159265359;
+            local-=(offsetValue*2.0-1.0)*0.45*saturate(ColorB.z);
+            float randomAngle=(PrismHash(wrapped,ColorA.z+37.0)*2.0-1.0)*ColorA.y*3.14159265359;
+            float mappedAngle=(rotationValue*2.0-1.0)*3.14159265359*saturate(ColorB.y);
+            float angle=randomAngle+mappedAngle;
             float cs=cos(angle), sn=sin(angle);
             float2 rotated=float2(cs*local.x-sn*local.y,sn*local.x+cs*local.y);
-            float2 sampleUV=rotated/max(0.01,Strength)+0.5;
+            float2 sampleUV=rotated/max(0.01,Strength*scaleFactor)+0.5;
             if(any(sampleUV<0.0) || any(sampleUV>1.0)) return float4(0,0,0,0);
             return Input.SampleLevel(SamplerStates_Linear_Clamp,sampleUV,0);
         }

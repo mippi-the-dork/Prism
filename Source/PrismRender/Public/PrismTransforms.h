@@ -25,5 +25,6 @@ class PRISMRENDER_API FPrismTransforms
 {
 public:
     static TiledBlobPtr Create(EPrismOp Op, MixUpdateCyclePtr Cycle, BufferDescriptor DesiredDesc,
-        TiledBlobPtr Input, const FPrismOpSettings& Settings, int32 TargetId, TiledBlobPtr InputB = nullptr);
+        TiledBlobPtr Input, const FPrismOpSettings& Settings, int32 TargetId, TiledBlobPtr InputB = nullptr,
+        TiledBlobPtr InputC = nullptr, TiledBlobPtr InputD = nullptr, TiledBlobPtr InputE = nullptr);
 };

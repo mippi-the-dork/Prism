@@ -1,6 +1,6 @@
 #include "SPrismLibrary.h"
-#include "PrismLibraryEntry.h"
-#include "PrismLibraryEntryFactory.h"
+#include "PrismFunction.h"
+#include "PrismFunctionFactory.h"
 #include "PrismLibraryCatalog.h"
 #include "Logging/LogMacros.h"
 #include "TextureGraph.h"
@@ -56,7 +56,7 @@ void SPrismLibrary::Construct(const FArguments& InArgs)
                 .OnClicked_Lambda([this]() { Refresh(); return FReply::Handled(); }) ]
             + SHorizontalBox::Slot().AutoWidth().Padding(4,0,0,0)
               [ SNew(SButton).Text(LOCTEXT("Register", "Register Selected"))
-                .ToolTipText(LOCTEXT("RegisterTip", "Create a Prism Library Entry for the TextureGraph selected in the Content Browser."))
+                .ToolTipText(LOCTEXT("RegisterTip", "Create a Prism Function for the TextureGraph selected in the Content Browser."))
                 .OnClicked(this, &SPrismLibrary::RegisterSelected) ] ]
         + SVerticalBox::Slot().FillHeight(1.f).Padding(8,0,8,8)
           [ ListView.ToSharedRef() ]
@@ -82,7 +82,7 @@ SPrismLibrary::~SPrismLibrary()
 
 void SPrismLibrary::OnRegistryChange(const FAssetData& Asset)
 {
-    if (Asset.AssetClassPath != UPrismLibraryEntry::StaticClass()->GetClassPathName()) return;
+    if (Asset.AssetClassPath != UPrismFunction::StaticClass()->GetClassPathName()) return;
     if (!bRefreshPending)
     {
         bRefreshPending = true;
@@ -105,12 +105,12 @@ EActiveTimerReturnType SPrismLibrary::DeferredRefresh(double CurrentTime, float 
 void SPrismLibrary::Refresh()
 {
     AllItems.Reset();
-    TArray<UPrismLibraryEntry*> Entries;
+    TArray<UPrismFunction*> Entries;
     FPrismLibraryCatalog::QueryEntries(Entries);
-    for (UPrismLibraryEntry* Entry : Entries)
+    for (UPrismFunction* Entry : Entries)
     {
         TSharedPtr<FPrismLibraryItem> Item = MakeShared<FPrismLibraryItem>();
-        Item->Entry = TStrongObjectPtr<UPrismLibraryEntry>(Entry);
+        Item->Entry = TStrongObjectPtr<UPrismFunction>(Entry);
         Item->Label = Entry->DisplayName.IsEmpty() ? FText::FromString(Entry->GetName()) : Entry->DisplayName;
         Item->Description = Entry->Description;
         Item->Category = Entry->Category;
@@ -142,7 +142,7 @@ void SPrismLibrary::ApplyFilter()
 
 TSharedRef<ITableRow> SPrismLibrary::GenerateRow(TSharedPtr<FPrismLibraryItem> Item, const TSharedRef<STableViewBase>& Owner)
 {
-    const UPrismLibraryEntry* Entry = Item->Entry.Get();
+    const UPrismFunction* Entry = Item->Entry.Get();
     const bool bDeprecated = Entry && Entry->bDeprecated;
     return SNew(STableRow<TSharedPtr<FPrismLibraryItem>>, Owner)
     [ SNew(SHorizontalBox)
@@ -162,7 +162,7 @@ TSharedRef<ITableRow> SPrismLibrary::GenerateRow(TSharedPtr<FPrismLibraryItem> I
         [ SNew(SButton).Text(LOCTEXT("Open", "Open"))
           .OnClicked(this, &SPrismLibrary::OpenGraph, Item) ]
       + SHorizontalBox::Slot().AutoWidth().Padding(2)
-        [ SNew(SButton).Text(LOCTEXT("Edit", "Edit Entry"))
+        [ SNew(SButton).Text(LOCTEXT("Edit", "Edit Function"))
           .OnClicked(this, &SPrismLibrary::EditEntry, Item) ] ];
 }
 
@@ -177,20 +177,20 @@ FReply SPrismLibrary::RegisterSelected()
         UTextureGraph* Graph = Cast<UTextureGraph>(Asset.GetAsset());
         if (!Graph) continue;
         bFoundGraph = true;
-        TArray<UPrismLibraryEntry*> ExistingEntries;
+        TArray<UPrismFunction*> ExistingEntries;
         FPrismLibraryCatalog::QueryEntries(ExistingEntries);
         if (FPrismLibraryCatalog::IsDuplicateGraph(Graph, ExistingEntries))
         {
             UE_LOG(LogTemp, Warning, TEXT("Prism: %s is already registered in the library. No duplicate created."), *Graph->GetPathName());
             return FReply::Handled();
         }
-        const FString BaseName = TEXT("PL_") + Graph->GetName();
+        const FString BaseName = TEXT("PF_") + Graph->GetName();
         FString PackageName, AssetName;
         IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
         AssetTools.CreateUniqueAssetName(TEXT("/Game/PrismLibrary/") + BaseName, TEXT(""), PackageName, AssetName);
-        UPrismLibraryEntry* Entry = Cast<UPrismLibraryEntry>(AssetTools.CreateAsset(
-            AssetName, FPackageName::GetLongPackagePath(PackageName), UPrismLibraryEntry::StaticClass(),
-            NewObject<UPrismLibraryEntryFactory>()));
+        UPrismFunction* Entry = Cast<UPrismFunction>(AssetTools.CreateAsset(
+            AssetName, FPackageName::GetLongPackagePath(PackageName), UPrismFunction::StaticClass(),
+            NewObject<UPrismFunctionFactory>()));
         if (Entry)
         {
             Entry->Graph = Graph;
